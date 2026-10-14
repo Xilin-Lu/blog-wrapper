@@ -114,6 +114,7 @@ function renderPage(template, page, title, body) {
     homeUrl: escapeHtml(relativeUrl(page, 'index.html')),
     articlesUrl: escapeHtml(relativeUrl(page, 'articles.html')),
     linksUrl: escapeHtml(relativeUrl(page, 'links.html')),
+    fontsUrl: escapeHtml(relativeUrl(page, 'fonts')),
   };
   return template.replace(/\{\{(\w+)\}\}/g, (_match, key) => values[key]);
 }
@@ -165,7 +166,7 @@ export async function build({
 
   const template = await readFile(templatePath, 'utf8');
   const placeholders = [...template.matchAll(/\{\{(\w+)\}\}/g)].map((match) => match[1]);
-  const expected = ['title', 'body', 'katexCss', 'highlightCss', 'homeUrl', 'articlesUrl', 'linksUrl'];
+  const expected = ['title', 'body', 'katexCss', 'highlightCss', 'homeUrl', 'articlesUrl', 'linksUrl', 'fontsUrl'];
   if (expected.some((key) => !placeholders.includes(key)) || placeholders.some((key) => !expected.includes(key))) {
     throw new Error(`HTML 模板缺少必要占位符或包含未知占位符：${templatePath}`);
   }
