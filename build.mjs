@@ -10,6 +10,7 @@ import hljs from 'highlight.js';
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const isMarkdown = (name) => /\.md$/i.test(name);
+const isDraftMarkdown = (name) => isMarkdown(name) && path.posix.basename(name).startsWith('draft');
 const toHtml = (name) => name.replace(/\.md$/i, '.html');
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -143,7 +144,7 @@ export async function build({
 
   let files;
   try {
-    files = await listFiles(contentDir);
+    files = (await listFiles(contentDir)).filter((name) => !isDraftMarkdown(name));
   } catch (error) {
     throw new Error(`无法读取内容目录 ${contentDir}：${error.message}；首次使用请运行 pnpm run init`, { cause: error });
   }

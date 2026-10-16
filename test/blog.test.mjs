@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,6 +84,102 @@ test('按路径倒序列出所有文章，排除主页和友链并转义标题',
   assert.match(html, />新文章 &amp; code<\/a>/);
   assert.match(html, />extra<\/a>/);
   assert.doesNotMatch(html, /href="(?:index|links)\.html"/);
+});
+
+test('递归忽略小写 draft 前缀的 Markdown，不输出源文件或页面，也不计入文章列表和数量', async (t) => {
+  const drafts = ['draft.md', 'draft-test.md', 'draft_notes.MD', 'posts/draft-中文.md', 'posts/nested/drafting.md'];
+  const f = await fixture(t, {
+    ...Object.fromEntries(drafts.map((name) => [name, '# 草稿文章\n'])),
+    'posts/published.md': '# 已发布文章\n',
+  });
+  const result = await build(f);
+  assert.equal(result.pages, 4);
+  assert.equal(result.articles, 1);
+  const html = await page(f, 'articles.html');
+  assert.match(html, /已发布文章/);
+  assert.doesNotMatch(html, /草稿文章|draft/);
+  assert.equal((html.match(/<li>/g) ?? []).length, 1);
+  for (const name of drafts) {
+    await assert.rejects(access(path.join(f.outputDir, name)), { code: 'ENOENT' });
+    await assert.rejects(access(path.join(f.outputDir, name.replace(/\.md$/i, '.html'))), { code: 'ENOENT' });
+    await access(path.join(f.contentDir, name));
+  }
+});
+
+test('大写前缀、非开头的 draft、草稿目录下的普通文章和非 Markdown 资源照常构建', async (t) => {
+  const articles = ['Draft-title.md', 'DRAFT-other.md', '2026-draft-test.md', 'draft/example.md'];
+  const f = await fixture(t, {
+    ...Object.fromEntries(articles.map((name) => [name, '# 正常文章\n'])),
+    'draft.png': Buffer.from([137, 80, 78, 71]),
+    'posts/draft-notes.txt': '普通资源\n',
+  });
+  const result = await build(f);
+  assert.equal(result.pages, 7);
+  assert.equal(result.articles, 4);
+  for (const name of articles) await access(path.join(f.outputDir, name.replace(/\.md$/i, '.html')));
+  assert.equal(((await page(f, 'articles.html')).match(/<li>/g) ?? []).length, 4);
+  assert.deepEqual(await readFile(path.join(f.outputDir, 'draft.png')), Buffer.from([137, 80, 78, 71]));
+  assert.equal(await readFile(path.join(f.outputDir, 'posts/draft-notes.txt'), 'utf8'), '普通资源\n');
+});
+
+test('草稿内部的失效链接和错误公式不参与检查，也不产生警告', async (t) => {
+  const f = await fixture(t, {
+    'posts/draft-errors.md': '# 草稿\n\n[失效链接](missing.md)\n\n$\\unknownCommand{x}$\n',
+  });
+  const warnings = [];
+  const result = await build({ ...f, onWarning: (message) => warnings.push(message) });
+  assert.equal(result.pages, 3);
+  assert.equal(result.articles, 0);
+  assert.deepEqual(warnings, []);
+});
+
+test('已发布文章链接到草稿时报告源文件和目标，并保留已有输出', async (t) => {
+  const f = await fixture(t, {
+    'posts/published.md': '# 已发布文章\n',
+    'posts/draft-hidden.md': '# 草稿\n',
+  });
+  await build(f);
+  const previousArticle = await page(f, 'posts/published.html');
+  const previousList = await page(f, 'articles.html');
+  await writeFile(path.join(f.contentDir, 'posts/published.md'), '# 已发布文章\n\n[草稿][ref]\n\n[ref]: draft-hidden.md?preview=1#section\n');
+  await assert.rejects(build(f), (error) => {
+    assert.match(error.message, /posts\/published\.md：Markdown 链接目标不存在/);
+    assert.ok(error.message.includes('draft-hidden.md?preview=1#section'));
+    return true;
+  });
+  assert.equal(await page(f, 'posts/published.html'), previousArticle);
+  assert.equal(await page(f, 'articles.html'), previousList);
+  await assert.rejects(access(path.join(f.outputDir, 'posts/draft-hidden.html')), { code: 'ENOENT' });
+});
+
+test('已发布文章改名为草稿后，重建清除旧页面和列表项', async (t) => {
+  const f = await fixture(t, { 'posts/published.md': '# 已发布文章\n' });
+  await build(f);
+  await access(path.join(f.outputDir, 'posts/published.html'));
+  await rename(path.join(f.contentDir, 'posts/published.md'), path.join(f.contentDir, 'posts/draft-published.md'));
+  const result = await build(f);
+  assert.equal(result.pages, 3);
+  assert.equal(result.articles, 0);
+  for (const name of ['posts/published.html', 'posts/draft-published.html', 'posts/draft-published.md']) {
+    await assert.rejects(access(path.join(f.outputDir, name)), { code: 'ENOENT' });
+  }
+  assert.doesNotMatch(await page(f, 'articles.html'), /已发布文章|published/);
+  await access(path.join(f.contentDir, 'posts/draft-published.md'));
+});
+
+test('草稿不参与输出冲突检查，同名静态资源仍可复制', async (t) => {
+  const f = await fixture(t, {
+    'draft-example.md': '# 草稿\n',
+    'draft-example.MD': '# 草稿\n',
+    'draft-example.html': '普通静态资源\n',
+    'assets/draft-reserved.md': '# 草稿\n',
+  });
+  const result = await build(f);
+  assert.equal(result.pages, 3);
+  assert.equal(result.articles, 0);
+  assert.equal(await page(f, 'draft-example.html'), '普通静态资源\n');
+  await assert.rejects(access(path.join(f.outputDir, 'assets/draft-reserved.html')), { code: 'ENOENT' });
+  await assert.rejects(access(path.join(f.outputDir, 'assets/draft-reserved.md')), { code: 'ENOENT' });
 });
 
 test('嵌套导航、中文路径、引用链接、查询参数和片段正确转换', async (t) => {
