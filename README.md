@@ -52,7 +52,9 @@ mise exec -- pnpm run build
 
 主页来自 `content/index.md`，友链来自 `content/links.md`。这两份文档必须存在。
 
-其余 `.md` 文档自动作为文章，推荐统一放在 `content/posts/`，支持嵌套目录和中文文件名。输出保留相对路径，将 `.md` 改为 `.html`。
+除草稿外，其余 `.md` 文档自动作为文章，推荐统一放在 `content/posts/`，支持嵌套目录和中文文件名。输出保留相对路径，将 `.md` 改为 `.html`。
+
+文件名以小写 `draft` 开头的 Markdown 会在构建时忽略。规则递归适用于整个内容目录，只检查文件名。非 Markdown 文件仍按资源复制。
 
 文章列表没有分页，按相对文件路径倒序排列。使用 `YYYY-MM-DD-title.md` 命名时，同一目录的新文章会排在前面；多个目录之间仍按目录名排序，而非跨目录比较日期。
 
