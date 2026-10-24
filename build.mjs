@@ -180,9 +180,11 @@ export async function build({
       const env = { source };
       const tokens = md.parse(await readFile(path.join(contentDir, source), 'utf8'), env);
       const page = targets.get(source);
+      let imageCount = 0;
       walkTokens(tokens, (token) => {
         const attr = token.type === 'link_open' ? 'href' : token.type === 'image' ? 'src' : null;
         if (attr) token.attrSet(attr, rewriteUrl(token.attrGet(attr), source, page, targets));
+        if (token.type === 'image') token.attrSet('loading', imageCount++ === 0 ? 'eager' : 'lazy');
       });
       const fallback = source === 'index.md' ? '主页' : source === 'links.md' ? '友链' : path.posix.basename(source).replace(/\.md$/i, '');
       const title = documentTitle(tokens, fallback);

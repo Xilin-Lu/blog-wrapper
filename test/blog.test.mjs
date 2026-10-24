@@ -203,6 +203,65 @@ test('嵌套导航、中文路径、引用链接、查询参数和片段正确�
   assert.equal(await readFile(path.join(f.outputDir, 'images/测试 图.svg'), 'utf8'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n');
 });
 
+test('每页首张 Markdown 图片正常加载，其余延迟，主页、友链与文章分别计数', async (t) => {
+  const content = '# 图片\n\n![第一张](https://example.com/first.png)\n\n![第二张](https://example.com/second.png)\n\n![第三张](https://example.com/third.png)\n';
+  const f = await fixture(t, { 'index.md': content, 'links.md': content, 'posts/example.md': content });
+  await build(f);
+  for (const name of ['index.html', 'links.html', 'posts/example.html']) {
+    const html = await page(f, name);
+    const images = [...html.matchAll(/<img\b[^>]*>/g)].map((match) => match[0]);
+    assert.equal(images.length, 3);
+    assert.match(images[0], /loading="eager"/);
+    assert.match(images[1], /loading="lazy"/);
+    assert.match(images[2], /loading="lazy"/);
+    assert.doesNotMatch(html, /<script\b/i);
+  }
+});
+
+test('延迟加载保留本地与外部路径、中文文件名、引用式图片、描述、标题和原图链接', async (t) => {
+  const image = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"></svg>\n';
+  const f = await fixture(t, {
+    'posts/深层/example.md': '# 图片\n\n[![本地 & 图片](</images/测试 图.svg> "示意图")](</images/测试 图.svg>)\n\n![外部图片](https://example.com/photo.png?x=1&y=2)\n\n![引用图片][ref]\n\n[ref]: /images/测试.svg "引用标题"\n',
+    'images/测试 图.svg': image,
+    'images/测试.svg': image,
+  });
+  await build(f);
+  const html = await page(f, 'posts/深层/example.html');
+  const images = [...html.matchAll(/<img\b[^>]*>/g)].map((match) => match[0]);
+  assert.equal(images.length, 3);
+  assert.match(images[0], /src="\.\.\/\.\.\/images\/%E6%B5%8B%E8%AF%95%20%E5%9B%BE\.svg"/);
+  assert.match(images[0], /alt="本地 &amp; 图片"/);
+  assert.match(images[0], /title="示意图"/);
+  assert.match(images[0], /loading="eager"/);
+  assert.match(html, /<a href="\.\.\/\.\.\/images\/%E6%B5%8B%E8%AF%95%20%E5%9B%BE\.svg"><img/);
+  assert.match(images[1], /src="https:\/\/example\.com\/photo\.png\?x=1&amp;y=2"/);
+  assert.match(images[1], /loading="lazy"/);
+  assert.match(images[2], /src="\.\.\/\.\.\/images\/%E6%B5%8B%E8%AF%95\.svg"/);
+  assert.match(images[2], /title="引用标题"/);
+  assert.match(images[2], /loading="lazy"/);
+  assert.equal(await readFile(path.join(f.outputDir, 'images/测试 图.svg'), 'utf8'), image);
+});
+
+test('原生 HTML 图片属性保留，代码示例不处理且不占 Markdown 图片计数', async (t) => {
+  const f = await fixture(t, {
+    'example.md': '# 图片\n\n<img src="raw.png">\n\n<img src="lazy.png" loading="lazy">\n\n<img src="eager.png" loading="eager">\n\n```markdown\n![示例](code.png)\n<img src="code.png">\n```\n\n`![行内示例](inline.png)`\n\n![真正的图片](https://example.com/real.png)\n',
+  });
+  await build(f);
+  const html = await page(f, 'example.html');
+  const images = [...html.matchAll(/<img\b[^>]*>/g)].map((match) => match[0]);
+  assert.equal(images.length, 4);
+  assert.equal(images[0], '<img src="raw.png">');
+  assert.equal(images[1], '<img src="lazy.png" loading="lazy">');
+  assert.equal(images[2], '<img src="eager.png" loading="eager">');
+  assert.match(images[3], /loading="eager"/);
+  const code = html.match(/<pre><code class="hljs">([\s\S]*?)<\/code><\/pre>/)[1];
+  const codeText = code.replace(/<[^>]*>/g, '').replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"');
+  assert.equal(codeText, '![示例](code.png)\n<img src="code.png">\n');
+  assert.doesNotMatch(code, /loading=/);
+  assert.match(html, /<code>!\[行内示例\]\(inline\.png\)<\/code>/);
+  assert.doesNotMatch(html, /src="(?:code|inline)\.png"/);
+});
+
 test('主页、友链标题缺失时使用默认标题，空文章列表可构建', async (t) => {
   const f = await fixture(t, { 'index.md': '欢迎\n', 'links.md': '- [链接](https://example.com/)\n' });
   assert.equal((await build(f)).pages, 3);
